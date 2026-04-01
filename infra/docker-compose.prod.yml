@@ -1,0 +1,3 @@
+# Production Docker Compose overrides.
+# Will override image tags, remove volume mounts, set restart policies,
+# and configure production environment variables / AWS service endpoints.

@@ -1,0 +1,3 @@
+# AWS CloudFormation (or CDK) template — TBD.
+# Will provision: EC2 instance(s) for inference API, Kinesis stream,
+# CloudWatch log groups and alarms, IAM roles, and VPC/security groups.

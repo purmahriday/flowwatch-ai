@@ -1,0 +1,3 @@
+# Local full-stack Docker Compose orchestration.
+# Will define services: backend (FastAPI), frontend (Next.js), timescaledb,
+# redis, and localstack (Kinesis simulation). Mounts .env for secrets.
