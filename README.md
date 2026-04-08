@@ -23,7 +23,6 @@ It runs two ML models on this data simultaneously, combines their outputs into a
 
 ## Live Dashboard
 
-![FlowWatch AI Dashboard]
 <img width="602" height="679" alt="Picture1" src="https://github.com/user-attachments/assets/3f032a60-7847-4778-bb8d-852440886ad5" />
 
 
