@@ -47,7 +47,7 @@ function AnomalyItem({
   isNew: boolean;
   onClick: (a: AnomalyRecord) => void;
 }) {
-  const sev = anomaly.severity as keyof typeof SEVERITY_COLORS;
+  const sev = anomaly.severity as 'critical' | 'high' | 'medium' | 'low';
   const colors = SEVERITY_COLORS[sev] ?? SEVERITY_COLORS.low;
 
   return (

@@ -111,7 +111,7 @@ function AlertItem({
   onAcknowledge: (alertId: string) => void;
 }) {
   const [acking, setAcking] = useState(false);
-  const sev = alert.severity as keyof typeof SEVERITY_COLORS;
+  const sev = alert.severity as 'critical' | 'high' | 'medium' | 'low';
 
   async function handleAcknowledge(e: React.MouseEvent) {
     e.stopPropagation();

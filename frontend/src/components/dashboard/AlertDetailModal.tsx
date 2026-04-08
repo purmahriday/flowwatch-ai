@@ -38,7 +38,7 @@ function ScoreBar({ score }: { score: number }) {
 }
 
 function AnomalyRow({ anomaly }: { anomaly: AnomalyRecord }) {
-  const sev = anomaly.severity as keyof typeof SEVERITY_COLORS;
+  const sev = anomaly.severity as 'critical' | 'high' | 'medium' | 'low';
 
   return (
     <div className="p-3 rounded-lg bg-gray-800/60 border border-gray-700 space-y-2">
@@ -129,7 +129,7 @@ export function AlertDetailModal({ alert, onClose, onAnalyzeWithAI }: AlertDetai
 
   if (!alert) return null;
 
-  const sev = alert.severity as keyof typeof SEVERITY_COLORS;
+  const sev = alert.severity as 'critical' | 'high' | 'medium' | 'low';
 
   function handleAnalyzeWithAI() {
     const target = anomalies[0] ?? null;

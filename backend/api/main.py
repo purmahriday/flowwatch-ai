@@ -22,6 +22,7 @@ list).  If ``API_KEYS`` is empty, auth is bypassed (development convenience).
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -34,6 +35,7 @@ from loguru import logger
 
 from backend.alerting.alert_manager import AlertManager
 from backend.api.dependencies import verify_api_key
+from backend.db import timeseries as db
 from backend.models.feature_engineering import FeatureExtractor
 from backend.models.isolation_forest import DEFAULT_MODEL_PATH as IF_MODEL_PATH
 from backend.models.lstm_model import DEFAULT_LSTM_PATH, AnomalyDetector
@@ -110,15 +112,33 @@ async def lifespan(app: FastAPI):
             err=exc,
         )
 
+    # ── TimescaleDB (optional) ────────────────────────────────────────────────
+    app.state.db = None
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        try:
+            await db.init_db(database_url)
+            app.state.db = True  # sentinel — actual pool lives in db module
+            logger.info("TimescaleDB connected")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "TimescaleDB unavailable — running in-memory only. Error: {e}", e=exc
+            )
+    else:
+        logger.warning("DATABASE_URL not set — running without database")
+
     elapsed = time.monotonic() - startup_t0
     logger.info(
-        "Startup complete in {elapsed:.3f}s | models_loaded={ml}",
+        "Startup complete in {elapsed:.3f}s | models_loaded={ml} db={db}",
         elapsed=elapsed,
         ml=app.state.anomaly_detector is not None,
+        db=app.state.db is not None,
     )
 
     yield  # ─── Application serves requests ───────────────────────────────────
 
+    if app.state.db is not None:
+        await db.close_db()
     logger.info("FlowWatch AI shutting down gracefully.")
 
 

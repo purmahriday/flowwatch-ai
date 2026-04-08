@@ -21,11 +21,11 @@ function cleanMarkdown(text: string): string {
     // Strip ## / ### headings — keep the heading text, drop the # prefix
     .replace(/^#{1,6}\s+/gm, '')
     // Strip **bold** markers
-    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/\*\*[\s\S]+?\*\*/g, (m) => m.slice(2, -2))
     // Strip *italic* markers (single asterisk, not bullet at line start)
-    .replace(/(?<!\n)\*(.+?)\*/gs, '$1')
+    .replace(/(?<!\n)\*[\s\S]+?\*/g, (m) => m.slice(1, -1))
     // Strip __underline__ markers
-    .replace(/__(.+?)__/gs, '$1')
+    .replace(/__[\s\S]+?__/g, (m) => m.slice(2, -2))
     // Collapse 3+ consecutive blank lines down to one
     .replace(/\n{3,}/g, '\n\n')
     .trim();

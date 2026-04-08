@@ -70,11 +70,15 @@ async def verify_api_key(
     if request.url.path == "/health":
         return
 
+    # Dev mode: bypass auth entirely when ENVIRONMENT=development
+    if os.getenv("ENVIRONMENT", "development") == "development":
+        return
+
     raw_keys = os.getenv("API_KEYS", "")
     valid_keys = {k.strip() for k in raw_keys.split(",") if k.strip()}
 
     if not valid_keys:
-        # Dev mode: no keys configured → allow all requests
+        # No keys configured → allow all requests
         return
 
     client_ip = request.client.host if request.client else "unknown"

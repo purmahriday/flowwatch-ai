@@ -1,3 +1,124 @@
-# Local full-stack Docker Compose orchestration.
-# Will define services: backend (FastAPI), frontend (Next.js), timescaledb,
-# redis, and localstack (Kinesis simulation). Mounts .env for secrets.
+version: "3.9"
+
+services:
+
+  # ── TimescaleDB ───────────────────────────────────────────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    environment:
+      POSTGRES_PASSWORD: flowwatch
+      POSTGRES_USER: flowwatch
+      POSTGRES_DB: flowwatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── LocalStack (Kinesis) ──────────────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.0
+    environment:
+      SERVICES: kinesis
+      DEFAULT_REGION: us-east-1
+      GATEWAY_LISTEN: "0.0.0.0:4566"
+      EAGER_SERVICE_LOADING: 1
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  # ── Backend (FastAPI) ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localstack:4566
+      KINESIS_STREAM_NAME: flowwatch-telemetry
+      DATABASE_URL: postgresql://flowwatch:flowwatch@timescaledb:5432/flowwatch
+      REDIS_URL: redis://redis:6379
+      ENVIRONMENT: development
+      API_KEYS: flowwatch-dev-key-001
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    volumes:
+      - ../backend/models/artifacts:/app/models/artifacts
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+  # ── Frontend (Next.js) ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_API_KEY: flowwatch-dev-key-001
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: flowwatch-dev-key-001
+    depends_on:
+      - backend
+
+  # ── Producer (optional — comment out if not needed) ───────────────────────────
+  # producer:
+  #   build:
+  #     context: ../backend
+  #     dockerfile: Dockerfile
+  #   env_file:
+  #     - ../.env
+  #   environment:
+  #     AWS_ACCESS_KEY_ID: test
+  #     AWS_SECRET_ACCESS_KEY: test
+  #     AWS_REGION: us-east-1
+  #     AWS_ENDPOINT_URL: http://localstack:4566
+  #     KINESIS_STREAM_NAME: flowwatch-telemetry
+  #     DATABASE_URL: postgresql://flowwatch:flowwatch@timescaledb:5432/flowwatch
+  #     REDIS_URL: redis://redis:6379
+  #     ENVIRONMENT: development
+  #     API_KEYS: flowwatch-dev-key-001
+  #   command: python -m backend.pipeline.kinesis_producer --dry-run
+  #   depends_on:
+  #     - localstack
+  #     - backend
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  timescaledb_data:
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  default:
+    name: flowwatch-network

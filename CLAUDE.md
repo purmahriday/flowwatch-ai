@@ -17,29 +17,16 @@ and provides an LLM-powered assistant for root cause analysis and alerting.
 
 ## Tech Stack
 
-### Backend
-- Language: Python 3.11+
-- API Framework: FastAPI (async)
-- ML Frameworks: PyTorch (LSTM models), Scikit-learn (Isolation Forest)
-- Data Pipeline: AWS Kinesis (local simulation via a Kinesis mock or LocalStack)
-- LLM Assistant: Anthropic Claude API (claude-sonnet-4-20250514)
-- Task Queue: (TBD — Celery or asyncio background tasks)
-- Database: TimescaleDB or InfluxDB for time-series telemetry storage
-- Caching: Redis (for recent telemetry state and alert deduplication)
-
-### Frontend
-- Framework: Next.js 14+ (App Router)
-- Language: TypeScript
-- Styling: Tailwind CSS
-- Charts: Recharts or Chart.js for real-time network metrics
-- Package Manager: npm
-
-### Infrastructure
-- Local: Docker Compose (all services containerized)
-- Cloud: AWS EC2 (inference APIs), AWS Kinesis (telemetry ingestion),
-         AWS CloudWatch (logging, alerting, dashboards)
-- Containerization: Docker
-- CI/CD: GitHub Actions (TBD)
+| Layer       | Technology                                              |
+|-------------|---------------------------------------------------------|
+| Backend     | Python 3.11+, FastAPI (async), asyncpg, loguru          |
+| ML          | PyTorch (LSTM autoencoder), Scikit-learn (Isolation Forest) |
+| Pipeline    | AWS Kinesis / LocalStack, Pydantic v2                   |
+| LLM         | Anthropic Claude API (`claude-sonnet-4-20250514`)        |
+| Database    | TimescaleDB (asyncpg) + in-memory deque fallback        |
+| Cache       | Redis                                                   |
+| Frontend    | Next.js 14+ (App Router), TypeScript, Tailwind, Recharts |
+| Infra       | Docker Compose, AWS EC2/Kinesis/CloudWatch (prod)       |
 
 ---
 
@@ -48,7 +35,7 @@ and provides an LLM-powered assistant for root cause analysis and alerting.
 ```
 flowwatch-ai/
 ├── backend/
-│   ├── api/                    # FastAPI route handlers
+│   ├── api/
 │   │   ├── routes/
 │   │   │   ├── telemetry.py    # Ingest & query telemetry endpoints
 │   │   │   ├── anomalies.py    # Anomaly detection endpoints
@@ -59,613 +46,258 @@ flowwatch-ai/
 │   ├── models/
 │   │   ├── lstm_model.py       # PyTorch LSTM anomaly detection model
 │   │   ├── isolation_forest.py # Scikit-learn Isolation Forest model
-│   │   └── feature_engineering.py  # Feature extraction from raw telemetry
+│   │   └── feature_engineering.py
 │   ├── pipeline/
-│   │   ├── kinesis_consumer.py # AWS Kinesis stream consumer
-│   │   ├── kinesis_producer.py # Telemetry data producer (for simulation)
-│   │   └── preprocessor.py     # Stream data cleaning and normalization
+│   │   ├── kinesis_consumer.py
+│   │   ├── kinesis_producer.py
+│   │   └── preprocessor.py
 │   ├── assistant/
-│   │   └── rca_agent.py        # Claude API integration for root cause analysis
+│   │   └── rca_agent.py        # Claude API integration for RCA
 │   ├── alerting/
-│   │   └── alert_manager.py    # Real-time alerting logic and CloudWatch integration
+│   │   └── alert_manager.py    # Alerting logic + CloudWatch integration
 │   ├── db/
-│   │   └── timeseries.py       # DB connection and telemetry write/read helpers
-│   ├── tests/                  # Unit and integration tests
+│   │   └── timeseries.py       # asyncpg pool, init_db, insert_telemetry, etc.
+│   ├── tests/
 │   ├── Dockerfile
 │   └── requirements.txt
-│
 ├── frontend/
 │   ├── src/
 │   │   ├── app/                # Next.js App Router pages
 │   │   ├── components/
-│   │   │   ├── dashboard/      # Dashboard-specific components (charts, tables)
-│   │   │   └── ui/             # Reusable UI components (cards, badges, alerts)
-│   │   ├── lib/                # API clients, utilities, constants
-│   │   └── styles/             # Global CSS
-│   ├── public/                 # Static assets
+│   │   │   ├── dashboard/      # Dashboard-specific components
+│   │   │   └── ui/             # Reusable UI components
+│   │   └── lib/                # API clients (api.ts), utilities
 │   ├── Dockerfile
 │   └── package.json
-│
 ├── infra/
-│   ├── docker-compose.yml      # Local full-stack orchestration
-│   ├── docker-compose.prod.yml # Production overrides
-│   └── aws/                    # AWS CloudFormation or CDK scripts (TBD)
-│
-├── notebooks/                  # Jupyter notebooks for model training & EDA
-├── data/                       # Sample/simulated telemetry data
-├── scripts/                    # Utility scripts (data generation, model export)
-├── .env.example                # Environment variable template
-├── .gitignore
-└── CLAUDE.md                   # This file
+│   ├── docker-compose.yml          # Full-stack local orchestration
+│   ├── docker-compose.override.yml # Dev hot-reload overrides
+│   └── docker-compose.prod.yml
+├── scripts/
+│   └── init_kinesis.py         # Create Kinesis stream in LocalStack
+├── notebooks/
+├── data/
+└── .env.example
 ```
 
 ---
 
 ## Development Commands
 
-### Backend
+### Backend (local, no Docker)
 ```bash
 cd backend
-pip install -r requirements.txt     # Install dependencies
-uvicorn api.main:app --reload        # Start FastAPI dev server (localhost:8000)
-pytest tests/                        # Run tests
+pip install -r requirements.txt
+uvicorn backend.api.main:app --reload   # localhost:8000
+pytest tests/
 ```
 
-### Frontend
+### Frontend (local, no Docker)
 ```bash
 cd frontend
-npm install                          # Install dependencies
-npm run dev                          # Start Next.js dev server (localhost:3000)
-npm run build                        # Build for production
-npm run lint                         # Run ESLint
+npm install
+npm run dev    # localhost:3000
 ```
 
-### Docker (Full Stack Local)
+### Docker — full stack
 ```bash
-docker-compose -f infra/docker-compose.yml up --build   # Start all services
-docker-compose -f infra/docker-compose.yml down          # Stop all services
+# Start everything (uses docker-compose.override.yml for hot reload automatically)
+docker-compose -f infra/docker-compose.yml up --build
+
+# Init Kinesis stream after LocalStack is up
+python scripts/init_kinesis.py
+
+# Stop
+docker-compose -f infra/docker-compose.yml down
 ```
+
+---
+
+## Docker Services
+
+| Service      | Image / Build         | Port | Notes                              |
+|--------------|-----------------------|------|------------------------------------|
+| timescaledb  | timescale/timescaledb | 5432 | Hypertables for telemetry + anomaly|
+| redis        | redis:7-alpine        | 6379 | Cache / deduplication              |
+| localstack   | localstack/localstack | 4566 | Kinesis simulation                 |
+| backend      | ./backend             | 8000 | FastAPI + ML models                |
+| frontend     | ./frontend            | 3000 | Next.js dashboard                  |
+| producer     | ./backend (commented) | —    | Optional telemetry simulator       |
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and fill in values. Never commit `.env`.
+Copy `.env.example` to `.env`. Never commit `.env`.
 
 ```
-# Anthropic
 ANTHROPIC_API_KEY=
-
-# AWS
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
 AWS_REGION=us-east-1
+AWS_ENDPOINT_URL=http://localstack:4566   # Docker; http://localhost:4566 locally
 KINESIS_STREAM_NAME=flowwatch-telemetry
-
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/flowwatch
-
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# App
+DATABASE_URL=postgresql://flowwatch:flowwatch@timescaledb:5432/flowwatch
+REDIS_URL=redis://redis:6379
 ENVIRONMENT=development
+API_KEYS=flowwatch-dev-key-001
 LOG_LEVEL=INFO
 ```
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-[Network Agents / Simulators]
+[Network Simulators / Agents]
         |
         v
-[AWS Kinesis Stream]  <-- telemetry: latency, packet_loss, dns_failures
+[AWS Kinesis / LocalStack]
         |
         v
-[Kinesis Consumer (backend/pipeline)]
-        |
-        v
-[Preprocessor + Feature Engineering]
+[Kinesis Consumer → Preprocessor → Feature Engineering]
         |
        / \
       v   v
-[LSTM Model]  [Isolation Forest]
+[LSTM×0.6] [Isolation Forest×0.4]
       \   /
        v v
-[Anomaly Score Aggregator]
+[Anomaly Score Aggregator]  ─→  [Alert Manager] ─→ [CloudWatch]
         |
         v
-[FastAPI Inference API]  <-->  [LLM RCA Assistant (Claude API)]
+[FastAPI API]  ←→  [LLM RCA Assistant (Claude)]
         |
         v
-[Alert Manager]  -->  [AWS CloudWatch / Notifications]
-        |
-        v
-[TimescaleDB / InfluxDB]  <-->  [Next.js Frontend Dashboard]
+[TimescaleDB]  ←→  [Next.js Dashboard]
 ```
 
 ---
 
-## ML Model Details
+## ML Models
 
 ### LSTM (PyTorch)
-- Input: sliding window of time-series telemetry features (window size TBD, ~30 steps)
-- Features: latency (ms), packet_loss (%), dns_failure_rate, jitter
-- Output: reconstruction error → anomaly if error > threshold
-- Training: offline on historical telemetry, exported as TorchScript for inference
+- Input: `(30, 4)` sliding window — latency, loss, dns, jitter (normalized)
+- Output: reconstruction error → anomaly if error > 95th-percentile threshold
+- Artifact: `backend/models/artifacts/lstm_model.pt` (TorchScript)
 
 ### Isolation Forest (Scikit-learn)
-- Input: feature vectors of current telemetry snapshot
-- Output: anomaly score (-1 = anomaly, 1 = normal)
-- Used as: fast, lightweight first-pass detector alongside LSTM
+- Input: `(19,)` feature vector (statistical + rate-of-change + temporal)
+- Output: anomaly score [0, 1]
+- Artifact: `backend/models/artifacts/isolation_forest.joblib`
 
-### Feature Engineering (backend/models/feature_engineering.py)
-- Rolling mean / std of latency and packet loss
-- Rate of change (delta) between consecutive readings
-- DNS failure frequency over sliding window
-- Time-of-day encoding (cyclic sin/cos features)
+### Ensemble
+- Combined score = LSTM×0.6 + IF×0.4
+- Severity: critical >0.8 / high >0.6 / medium >0.4 / low otherwise
 
 ---
 
-## API Endpoints (FastAPI)
+## API Endpoints
 
-| Method | Endpoint                  | Description                              |
-|--------|---------------------------|------------------------------------------|
-| POST   | /telemetry/ingest         | Ingest raw telemetry data point          |
-| GET    | /telemetry/recent         | Fetch recent telemetry (last N minutes)  |
-| GET    | /anomalies/latest         | Get latest detected anomalies            |
-| POST   | /anomalies/detect         | Run on-demand anomaly detection          |
-| POST   | /assistant/analyze        | Ask LLM assistant to explain anomaly     |
-| POST   | /assistant/chat           | Conversational follow-up with assistant  |
-| GET    | /alerts/recent            | Fetch recent fired alerts (filterable)   |
-| GET    | /alerts/stats             | Aggregate alert statistics               |
-| GET    | /health                   | Health check                             |
+| Method | Endpoint             | Description                            |
+|--------|----------------------|----------------------------------------|
+| POST   | /telemetry/ingest    | Ingest raw telemetry data point        |
+| GET    | /telemetry/recent    | Fetch recent telemetry (last N minutes)|
+| GET    | /telemetry/hosts     | List active hosts with health snapshot |
+| GET    | /anomalies/latest    | Get latest detected anomalies          |
+| POST   | /anomalies/detect    | On-demand anomaly detection            |
+| POST   | /assistant/analyze   | LLM root cause analysis                |
+| POST   | /assistant/chat      | Conversational follow-up               |
+| GET    | /alerts/recent       | Recent fired alerts                    |
+| GET    | /alerts/stats        | Aggregate alert statistics             |
+| GET    | /health              | Liveness probe (no auth)               |
+
+Auth: `X-API-Key` header; keys from `API_KEYS` env var (comma-separated).
+
+---
+
+## Database Schema
+
+### telemetry_records (hypertable on `timestamp`)
+`host_id, timestamp, latency_ms, packet_loss_pct, dns_failure_rate, jitter_ms, health_score, is_anomaly, anomaly_score, severity`
+
+### anomaly_events (hypertable on `timestamp`)
+`host_id, timestamp, combined_score, severity, worst_feature, lstm_score, if_score, detection_method`
+
+DB is optional — if `DATABASE_URL` is unset or unreachable, the backend falls back to in-memory deques automatically.
+
+---
+
+## In-Memory Stores (app.state)
+
+| Store             | Type                        | Max per host |
+|-------------------|-----------------------------|--------------|
+| `telemetry_store` | `dict[host_id, deque]`      | 1 000        |
+| `anomaly_store`   | `dict[host_id, deque]`      | 500          |
+| `alert_manager`   | `AlertManager._alerts deque`| 1 000 total  |
 
 ---
 
 ## Code Conventions
 
-### Python (Backend)
-- Use Python 3.11+ type hints everywhere
-- Async/await for all FastAPI route handlers
-- Pydantic v2 models for all request/response schemas
-- Keep route handlers thin — business logic lives in service/model layers
-- Use `loguru` for structured logging
-- All ML model files must include a `predict(features)` and `train(data)` method
+### Python
+- Python 3.11+ type hints everywhere
+- `async/await` for all FastAPI handlers; `asyncio.to_thread` for CPU-bound ML
+- Pydantic v2 for all request/response schemas
+- Route handlers thin — logic in service/model layers
+- `loguru` for structured logging
 
-### TypeScript (Frontend)
-- Use TypeScript strictly — no `any` types
-- Prefer functional components with hooks
-- Use Tailwind utility classes — avoid inline styles
-- Keep components focused and single-purpose
-- API calls go in `src/lib/api.ts`
+### TypeScript
+- Strict TypeScript — no `any`
+- Functional components with hooks
+- Tailwind utility classes only
+- API calls in `src/lib/api.ts`
 
 ---
 
 ## What to Avoid
 
-- Do NOT hardcode AWS credentials or API keys anywhere in code
-- Do NOT block the async event loop in FastAPI routes (use `run_in_executor` for CPU-heavy ML inference if needed)
-- Do NOT store raw telemetry in memory beyond the processing window — write to DB
-- Do NOT skip Pydantic validation on incoming telemetry payloads
-- Do NOT mix training logic with inference logic in the same file
+- No hardcoded credentials or API keys
+- No blocking the event loop in FastAPI routes
+- No mixing training and inference logic in the same file
+- No skipping Pydantic validation on incoming payloads
 
 ---
 
-## Current Status & Build Order
+## Current Status
 
-Track progress here as features are completed.
-
-- [X] Phase 1: Project scaffolding (folder structure, Docker Compose, env setup)
-- [X] Phase 2: Telemetry simulator (kinesis_producer.py) + Kinesis consumer
+- [X] Phase 1: Project scaffolding
+- [X] Phase 2: Telemetry simulator + Kinesis consumer
 - [X] Phase 3: Feature engineering pipeline
-- [X] Phase 4: Isolation Forest model (faster to build first)
+- [X] Phase 4: Isolation Forest model
 - [~] Phase 5: LSTM model (PyTorch) + training notebook
 - [~] Phase 6: FastAPI inference endpoints
-- [~] Phase 7: LLM RCA assistant (Claude API integration)
+- [~] Phase 7: LLM RCA assistant (Claude API)
 - [~] Phase 8: Alert manager + CloudWatch integration
-- [~] Phase 9: Next.js frontend dashboard (AlertFeed + AlertDetailModal; alert-first UX)
-- [ ] Phase 10: Docker Compose full-stack wiring
+- [~] Phase 9: Next.js frontend dashboard
+- [~] Phase 10: Docker Compose full-stack wiring
 - [ ] Phase 11: AWS deployment (EC2 + Kinesis + CloudWatch)
 
 ---
 
-## Key Decisions Log
-
-| Date       | Decision                                      | Reason                                      |
-|------------|-----------------------------------------------|---------------------------------------------|
-| 2026-04-01 | Use FastAPI over Flask                        | Native async support, better for streaming  |
-| 2026-04-01 | Use both LSTM + Isolation Forest              | Complementary: LSTM=temporal, IF=snapshot   |
-| 2026-04-01 | Claude API for RCA assistant                  | Best-in-class for log/telemetry analysis    |
-| 2026-04-01 | LocalStack for local Kinesis simulation       | Avoid AWS costs during development          |
-| 2026-04-01 | Next.js + Recharts for frontend               | SSR + real-time chart support               |
-| 2026-04-05 | In-memory stores (deque) for Phase 6          | No DB wired yet; replace with TimescaleDB in Phase 10 |
-| 2026-04-05 | API key auth via X-API-Key header             | Simple stateless auth; upgrade to JWT in Phase 11 |
-| 2026-04-05 | Rule-based fallback when Claude API fails     | Ensures assistant endpoint is always available |
-| 2026-04-07 | RCAAgent in backend/assistant/rca_agent.py    | Separates LLM logic from route handlers; enables batch_analyze and reuse |
-| 2026-04-07 | AsyncAnthropic client in RCAAgent             | Matches FastAPI async model; avoids blocking event loop |
-| 2026-04-07 | Routes pull telemetry from app.state first    | Richer context without requiring caller to pass full history every time |
-| 2026-04-07 | AlertManager is sync; callers use asyncio.to_thread | boto3 is blocking; keeps alert_manager.py simple, compatible with async FastAPI |
-| 2026-04-07 | alerts_router mounted at /alerts (not /anomalies/alerts) | Cleaner URL hierarchy; alerts are a separate concern from anomaly detection |
-| 2026-04-07 | CloudWatch dispatch disabled gracefully if boto3/creds missing | Keeps dev environment functional without AWS setup |
-| 2026-04-07 | Each dashboard component polls independently every 5 s          | Isolates fetch failures; a broken component doesn't stall others |
-| 2026-04-07 | Error boundaries wrap every dashboard panel                    | Render failures in one widget don't crash the whole page |
-| 2026-04-07 | RCAPanel state lifted to page.tsx (selectedAnomaly)            | AnomalyFeed and RCAPanel communicate via page state, not context |
-| 2026-04-07 | alerts_router mounted at /alerts; accessed via fetch in api.ts | Dashboard can add alert endpoints without touching anomaly route |
-| 2026-04-07 | AlertFeed replaces AnomalyFeed as primary view                 | Alerts are the operator-facing surface; anomalies are detail data |
-| 2026-04-07 | AlertDetailModal fetches /anomalies/latest?host_id=X on open   | Lazy-loads anomaly rows only when operator drills into an alert   |
-| 2026-04-07 | "Analyze with AI" closes modal and sets selectedAnomaly        | Reuses existing RCAPanel without a second chat surface            |
-| 2026-04-07 | Acknowledge is optimistic-UI: local state updates immediately  | Avoids a full re-poll just to reflect the ACK badge              |
-| 2026-04-07 | Active Alerts stat card now reads from /alerts/stats           | Decouples alert count from anomaly store; most_affected_host too  |
-| 2026-04-07 | AlertFeed cards show 4 metric rows with BAD/normal indicators  | Operators see the specific degraded metric without opening modal  |
-| 2026-04-07 | Peak telemetry fetched per host at AlertFeed level, not per-card | Deduplicates API calls; one fetch per unique host per poll cycle |
-| 2026-04-07 | Anomaly type label derived from thresholds (latency/loss/dns/jitter) | Gives instant human-readable context before AI analysis       |
-| 2026-04-07 | RCAPanel parses Claude's 4 sections client-side from analysis text | API returns full text; frontend splits into styled section boxes |
-| 2026-04-07 | RCA section boxes have colored left borders (blue/purple/red/orange) | Visual hierarchy matches NOC operator mental model             |
-| 2026-04-07 | rca_agent.py system prompt updated with metric-specific rules   | Prevents Claude from citing irrelevant metrics (e.g. DNS for latency-only anomaly) |
-| 2026-04-07 | _DEFAULT_MAX_TOKENS bumped 500→800 in rca_agent.py             | New specific prompt requires more completion space              |
-| 2026-04-07 | Card.tsx gains bodyClassName prop for flex-1 height chains      | Panel scroll relies on flex-1 propagating through Card's body div |
-| 2026-04-07 | page.tsx: min-h-screen mobile / h-screen lg:overflow-hidden desktop | Panels scroll independently on desktop; page scrolls on mobile |
-| 2026-04-07 | Grid rows use lg:flex-1 lg:min-h-0 instead of fixed heights     | Panels share remaining viewport height equally without fixed px |
-| 2026-04-07 | Breakpoints changed from xl: to lg: for chart/alert/bottom grids | Dashboard usable on 1024px screens (tablets in landscape)      |
-| 2026-04-07 | RCAPanel messages area: max-h-64 removed, flex-1 min-h-0 added  | AI analysis sections fully visible; quick-action + input pinned |
-
----
-
-## Telemetry Schema
-
-### TelemetryRecord (backend/pipeline/kinesis_consumer.py)
-
-Pydantic v2 model. Produced by `kinesis_producer.py`, validated by the consumer.
-
-| Field              | Type            | Constraints        | Description                                      |
-|--------------------|-----------------|--------------------|--------------------------------------------------|
-| `timestamp`        | `str`           | ISO 8601 UTC       | Record creation time                             |
-| `host_id`          | `str`           | non-empty          | Simulated host identifier (e.g. `host-01`)       |
-| `latency_ms`       | `float`         | ≥ 0                | Round-trip latency in milliseconds               |
-| `packet_loss_pct`  | `float`         | [0, 100]           | Packet loss as a percentage                      |
-| `dns_failure_rate` | `float`         | [0, 1]             | Fraction of DNS queries that failed              |
-| `jitter_ms`        | `float`         | ≥ 0                | Network jitter in milliseconds                   |
-| `is_anomaly`       | `bool`          | —                  | True when an anomaly was injected                |
-| `anomaly_type`     | `str \| None`   | SPIKE/LOSS/DNS/CASCADE | Present only when `is_anomaly=True`          |
-
-### ProcessedRecord (backend/pipeline/preprocessor.py)
-
-All TelemetryRecord fields (post-clipping) plus:
-
-| Field                   | Type    | Range   | Description                                                  |
-|-------------------------|---------|---------|--------------------------------------------------------------|
-| `latency_normalized`    | `float` | [0, 1]  | latency_ms min-max scaled over [0, 1000]                     |
-| `loss_normalized`       | `float` | [0, 1]  | packet_loss_pct min-max scaled over [0, 100]                 |
-| `dns_normalized`        | `float` | [0, 1]  | dns_failure_rate (already [0,1], min-max identity)           |
-| `jitter_normalized`     | `float` | [0, 1]  | jitter_ms min-max scaled over [0, 200]                       |
-| `composite_health_score`| `float` | [0, 1]  | Weighted avg: latency×0.4 + loss×0.3 + dns×0.2 + jitter×0.1 |
-| `is_business_hours`     | `bool`  | —       | True when record UTC time is Mon–Fri 08:00–17:59             |
-
-### FeatureVector (backend/models/feature_engineering.py)
-
-Output of `FeatureExtractor.process()`.  Requires a full 30-record window per host.
-
-**Statistical features (11)** — computed over the 30-record sliding window:
-
-| Field                  | Type    | Description                                                  |
-|------------------------|---------|--------------------------------------------------------------|
-| `rolling_mean_latency` | `float` | Mean of `latency_normalized` over window                     |
-| `rolling_std_latency`  | `float` | Std-dev of `latency_normalized` (ddof=1)                     |
-| `rolling_mean_loss`    | `float` | Mean of `loss_normalized`                                    |
-| `rolling_std_loss`     | `float` | Std-dev of `loss_normalized` (ddof=1)                        |
-| `rolling_mean_dns`     | `float` | Mean of `dns_normalized`                                     |
-| `rolling_mean_jitter`  | `float` | Mean of `jitter_normalized`                                  |
-| `rolling_std_jitter`   | `float` | Std-dev of `jitter_normalized` (ddof=1)                      |
-| `latency_trend`        | `float` | Linear regression slope of `latency_normalized` (+= worsening) |
-| `health_score_trend`   | `float` | Linear regression slope of `composite_health_score`          |
-| `spike_count`          | `float` | Records in window where `latency_normalized` > 0.7           |
-| `loss_spike_count`     | `float` | Records in window where `loss_normalized` > 0.5              |
-
-**Rate-of-change features (3)** — last two records:
-
-| Field            | Type    | Description                                       |
-|------------------|---------|---------------------------------------------------|
-| `latency_delta`  | `float` | `latency_normalized[-1] − latency_normalized[-2]` |
-| `loss_delta`     | `float` | `loss_normalized[-1] − loss_normalized[-2]`       |
-| `dns_delta`      | `float` | `dns_normalized[-1] − dns_normalized[-2]`         |
-
-**Temporal features (5)**:
-
-| Field                | Type    | Description                                          |
-|----------------------|---------|------------------------------------------------------|
-| `hour_sin`           | `float` | `sin(2π × UTC_hour / 24)`                           |
-| `hour_cos`           | `float` | `cos(2π × UTC_hour / 24)`                           |
-| `day_sin`            | `float` | `sin(2π × weekday / 7)` (Mon=0)                     |
-| `day_cos`            | `float` | `cos(2π × weekday / 7)`                             |
-| `is_business_hours`  | `float` | `1.0` if Mon–Fri 08:00–17:59 UTC, else `0.0`        |
-
-**Output shapes**:
-
-| Method                          | Shape     | Use case               |
-|---------------------------------|-----------|------------------------|
-| `to_lstm_input()`               | `(30, 4)` | LSTM autoencoder input |
-| `to_isolation_forest_input()`   | `(19,)`   | Isolation Forest input |
-
----
-
-### AnomalyResult (backend/models/isolation_forest.py)
-
-Output of `IsolationForestDetector.predict()` and `predict_batch()`.
-
-| Field                       | Type          | Description                                                           |
-|-----------------------------|---------------|-----------------------------------------------------------------------|
-| `is_anomaly`                | `bool`        | True when raw IF prediction == -1                                     |
-| `anomaly_score`             | `float`       | Normalised score [0, 1] — 0 = normal, 1 = certain anomaly            |
-| `raw_score`                 | `float`       | Raw `decision_function` output (negative = anomalous)                 |
-| `confidence`                | `float`       | `abs(anomaly_score − 0.5) × 2` — 0 = at boundary, 1 = far away       |
-| `top_contributing_features` | `list[str]`   | Top-3 feature names most deviant from training-set means              |
-| `host_id`                   | `str`         | Forwarded from input FeatureVector                                    |
-| `timestamp`                 | `str`         | Forwarded from input FeatureVector                                    |
-| `model_version`             | `str`         | e.g. `"1.0.0-20260401-120000"`                                        |
-| `inference_time_ms`         | `float`       | Wall-clock milliseconds for this prediction                           |
-
-### TrainingResult (backend/models/isolation_forest.py)
-
-| Field                        | Type          | Description                                               |
-|------------------------------|---------------|-----------------------------------------------------------|
-| `n_samples`                  | `int`         | Training set size                                         |
-| `contamination`              | `float`       | Expected anomaly fraction used for threshold              |
-| `training_anomaly_rate`      | `float`       | Fraction of training samples flagged by fitted model      |
-| `feature_importance`         | `list[float]` | Per-feature std-dev across training data (proxy importance) |
-| `feature_names`              | `list[str]`   | Ordered feature names matching `feature_importance`       |
-| `training_duration_seconds`  | `float`       | Wall-clock training time                                  |
-| `model_version`              | `str`         | Version string                                            |
-| `training_date`              | `str`         | UTC ISO 8601 timestamp                                    |
-
-### Model Artifact (`backend/models/artifacts/isolation_forest.joblib`)
-
-Saved by `IsolationForestDetector.save()`.  Contains: `model`, `metadata`,
-`score_min`, `score_max`, `training_mean`.  Load with
-`IsolationForestDetector.load()`.
-
----
-
-### LSTMResult (backend/models/lstm_model.py)
-
-Output of `LSTMDetector.predict()` and `predict_batch()`.
-
-| Field                  | Type              | Description                                                           |
-|------------------------|-------------------|-----------------------------------------------------------------------|
-| `is_anomaly`           | `bool`            | True when reconstruction error exceeds the 95th-percentile threshold  |
-| `anomaly_score`        | `float`           | Z-score normalised to [0, 1] via `clip((z+3)/6, 0, 1)`               |
-| `reconstruction_error` | `float`           | Raw mean MSE across all 30 timesteps and 4 features                   |
-| `threshold_used`       | `float`           | 95th-percentile threshold from training (fixed at train time)         |
-| `per_feature_errors`   | `dict[str,float]` | MSE per feature: `latency`, `loss`, `dns`, `jitter`                   |
-| `worst_feature`        | `str`             | Feature name with the highest individual reconstruction error          |
-| `inference_time_ms`    | `float`           | Wall-clock milliseconds for the forward pass                          |
-| `model_version`        | `str`             | Version string e.g. `"1.0.0-20260401-120000"`                         |
-
-### LSTMTrainingResult (backend/models/lstm_model.py)
-
-| Field                        | Type          | Description                                                   |
-|------------------------------|---------------|---------------------------------------------------------------|
-| `n_samples_train`            | `int`         | Normal windows in the training split                          |
-| `n_samples_val`              | `int`         | Normal windows in the validation split                        |
-| `best_val_loss`              | `float`       | Lowest validation MSE (best checkpoint)                       |
-| `epochs_trained`             | `int`         | Actual epochs before early stopping                           |
-| `threshold`                  | `float`       | 95th-percentile reconstruction error on full training set     |
-| `error_mean`                 | `float`       | Mean error on training set (for z-score normalisation)        |
-| `error_std`                  | `float`       | Std-dev of error on training set                              |
-| `training_duration_seconds`  | `float`       | Wall-clock training time                                      |
-| `model_version`              | `str`         | Version string                                                |
-| `device_used`                | `str`         | `"cuda"` or `"cpu"`                                           |
-| `train_losses`               | `list[float]` | Per-epoch training MSE                                        |
-| `val_losses`                 | `list[float]` | Per-epoch validation MSE                                      |
-
-### CombinedAnomalyResult (backend/models/lstm_model.py)
-
-Output of `AnomalyDetector.detect()` — ensemble result fusing LSTM + Isolation Forest.
-
-| Field                       | Type           | Description                                                         |
-|-----------------------------|----------------|---------------------------------------------------------------------|
-| `is_anomaly`                | `bool`         | `combined_score > 0.5` OR `(lstm.is_anomaly AND if.is_anomaly)`     |
-| `combined_score`            | `float`        | Weighted average: LSTM×0.6 + IF×0.4                                 |
-| `severity`                  | `str`          | `critical` (>0.8) / `high` (>0.6) / `medium` (>0.4) / `low`        |
-| `lstm_result`               | `LSTMResult`   | Full LSTM detector output                                           |
-| `if_result`                 | `AnomalyResult`| Full Isolation Forest output                                        |
-| `detection_method`          | `str`          | `"lstm+if"` / `"lstm_only"` / `"if_only"` / `"none"`               |
-| `worst_feature`             | `str`          | Highest-error feature from LSTM per-feature breakdown               |
-| `top_contributing_features` | `list[str]`    | Top-3 features from IF deviation analysis                           |
-| `timestamp`                 | `datetime`     | UTC datetime parsed from the input FeatureVector                    |
-
-### LSTM Artifact (`backend/models/artifacts/lstm_model.pt`)
-
-Saved by `LSTMTrainer._save_artifact()`.  Single `torch.save` dict containing:
-`scripted_bytes` (TorchScript model), `threshold`, `error_mean`, `error_std`,
-`model_version`, `training_date`.  Load with `LSTMDetector.load()`.
-
----
-
-### Anomaly Baselines (producer simulation)
-
-| Anomaly Type | Affected Metric(s)    | Injected Range          |
-|--------------|-----------------------|-------------------------|
-| SPIKE        | latency_ms            | 300 – 800 ms            |
-| LOSS         | packet_loss_pct       | 15 – 40 %               |
-| DNS          | dns_failure_rate      | 0.4 – 0.9               |
-| CASCADE      | all four metrics      | All ranges above + jitter 50–150 ms |
-
----
-
-## Phase 6 API Schemas (backend/api/schemas.py)
-
-### TelemetryIngestRequest
-
-| Field              | Type              | Constraints         | Description                                   |
-|--------------------|-------------------|---------------------|-----------------------------------------------|
-| `host_id`          | `str`             | pattern `host-\d{2}`| Host identifier, e.g. `host-01`               |
-| `latency_ms`       | `float`           | [0, 1000]           | Round-trip latency in ms                      |
-| `packet_loss_pct`  | `float`           | [0, 100]            | Packet loss as a percentage                   |
-| `dns_failure_rate` | `float`           | [0, 1]              | DNS failure fraction                          |
-| `jitter_ms`        | `float`           | [0, 500]            | Network jitter in ms                          |
-| `timestamp`        | `datetime \| None`| optional            | Record time; defaults to UTC now              |
-
-### TelemetryIngestResponse
-
-| Field             | Type                              | Description                                            |
-|-------------------|-----------------------------------|--------------------------------------------------------|
-| `record_id`       | `str`                             | UUID4 assigned to this record                          |
-| `host_id`         | `str`                             | Echo of the ingested host                              |
-| `processed`       | `bool`                            | True when preprocessing succeeded                      |
-| `anomaly_detected`| `bool`                            | False when window not yet full                         |
-| `anomaly_result`  | `CombinedAnomalyResultSchema\|None`| Populated when anomaly detected                       |
-| `window_ready`    | `bool`                            | True once 30 records buffered for this host            |
-| `message`         | `str`                             | Human-readable status                                  |
-
-### AnomalyDetectRequest / AnomalyDetectResponse
-
-`AnomalyDetectRequest`: `host_id: str` + `feature_vector: dict` (from `FeatureVector.to_dict()`).
-
-`AnomalyDetectResponse`: `host_id`, `detection_timestamp`, `recommendation` (str), `result` (CombinedAnomalyResultSchema).
-
-### AnomalyRecord (stored in app.state.anomaly_store)
-
-| Field                       | Type                  | Description                               |
-|-----------------------------|-----------------------|-------------------------------------------|
-| `record_id`                 | `str`                 | UUID4                                     |
-| `host_id`                   | `str`                 |                                           |
-| `detected_at`               | `datetime`            | UTC wall-clock time of detection          |
-| `severity`                  | `str`                 | critical / high / medium / low            |
-| `combined_score`            | `float`               | LSTM×0.6 + IF×0.4                         |
-| `is_anomaly`                | `bool`                |                                           |
-| `detection_method`          | `str`                 | lstm+if / lstm_only / if_only / none      |
-| `worst_feature`             | `str`                 | Highest LSTM reconstruction error feature |
-| `top_contributing_features` | `list[str]`           | Top-3 IF deviation features               |
-| `lstm_result`               | `LSTMResultSchema`    | Full LSTM result                          |
-| `if_result`                 | `IFResultSchema`      | Full IF result                            |
-| `anomaly_timestamp`         | `datetime`            | Timestamp of the triggering record        |
-| `recommendation`            | `str`                 | Rule-based action recommendation          |
-
-### AssistantAnalyzeRequest / AssistantAnalyzeResponse
-
-`AssistantAnalyzeRequest`: `host_id`, `anomaly_result: dict`, `recent_telemetry: list[dict]`, `question: str`.
-
-`AssistantAnalyzeResponse`: `host_id`, `analysis: str`, `anomaly_severity`, `recommended_actions: list[str]`, `confidence: float`, `analysis_timestamp`, `model_used: str`.
-
----
-
-## Phase 7 Agent Schemas (backend/assistant/rca_agent.py)
-
-### RCAResponse (dataclass)
-
-Output of `RCAAgent.analyze()`.  Parsed from Claude's 4-section structured response.
-
-| Field                    | Type          | Description                                                               |
-|--------------------------|---------------|---------------------------------------------------------------------------|
-| `host_id`                | `str`         | Target host identifier                                                    |
-| `analysis`               | `str`         | Full Claude response text (or rule-based fallback summary)                |
-| `severity`               | `str`         | critical / high / medium / low — forwarded from anomaly_result            |
-| `what_is_happening`      | `str`         | Parsed section 1 — 1-2 sentence situation summary                         |
-| `root_cause`             | `str`         | Parsed section 2 — 2-3 sentence root cause assessment                     |
-| `immediate_actions`      | `list[str]`   | Parsed section 3 — 2-3 bullet-point action items                          |
-| `severity_justification` | `str`         | Parsed section 4 — one-line severity rationale                             |
-| `confidence`             | `float`       | `min(combined_score, 1.0)` — confidence derived from ensemble score        |
-| `model_used`             | `str`         | Claude model ID or `"rule-based-fallback"` when API unavailable            |
-| `analysis_timestamp`     | `datetime`    | UTC datetime when analysis was produced                                   |
-| `tokens_used`            | `int`         | Total input + output tokens consumed (0 for fallback)                     |
-| `latency_ms`             | `float`       | Wall-clock ms for the Claude API call (0.0 for fallback)                  |
-
-### ChatResponse (dataclass)
-
-Output of `RCAAgent.chat()`.
-
-| Field                    | Type          | Description                                                               |
-|--------------------------|---------------|---------------------------------------------------------------------------|
-| `response`               | `str`         | Claude's reply text                                                       |
-| `conversation_history`   | `list[dict]`  | Updated history `[{"role": str, "content": str}]` including the new turn  |
-
-### RCAAgent methods
-
-| Method            | Signature                                                                     | Description                                            |
-|-------------------|-------------------------------------------------------------------------------|--------------------------------------------------------|
-| `analyze()`       | `async (host_id, anomaly_result, recent_telemetry, question) → RCAResponse`   | Single anomaly RCA; falls back to rule-based on failure|
-| `chat()`          | `async (message, conversation_history, host_context) → ChatResponse`          | Multi-turn conversation; trims to last 10 turns        |
-| `batch_analyze()` | `async (anomalies: list[dict]) → list[RCAResponse]`                           | Up to 5 concurrent analyses via asyncio.gather         |
-
-### In-Memory Store Limits (Phase 6)
-
-| Store             | Key      | Value type       | Max per host | Location           |
-|-------------------|----------|------------------|--------------|--------------------|
-| `telemetry_store` | host_id  | deque[ProcessedRecord] | 1 000  | `app.state`        |
-| `anomaly_store`   | host_id  | deque[AnomalyRecord]   | 500    | `app.state`        |
-
----
-
-## Phase 8 Alert Schemas (backend/alerting/alert_manager.py)
-
-### Alert (dataclass)
-
-Created by `AlertManager.evaluate()` when an anomaly meets the severity threshold and is not in cooldown.
-
-| Field                       | Type                  | Description                                                              |
-|-----------------------------|-----------------------|--------------------------------------------------------------------------|
-| `alert_id`                  | `str`                 | UUID4 identifier                                                         |
-| `host_id`                   | `str`                 | Host that triggered the alert                                            |
-| `severity`                  | `str`                 | critical / high / medium / low                                           |
-| `combined_score`            | `float`               | Ensemble anomaly score [0, 1]                                            |
-| `worst_feature`             | `str`                 | Most degraded network metric (from LSTM)                                 |
-| `top_contributing_features` | `list[str]`           | Top-3 IF deviation features                                              |
-| `message`                   | `str`                 | Human-readable alert summary                                             |
-| `timestamp`                 | `datetime`            | UTC datetime when the alert was created                                  |
-| `acknowledged`              | `bool`                | True after operator acknowledges via `AlertManager.acknowledge()`        |
-| `resolved`                  | `bool`                | True after `AlertManager.resolve()` is called                            |
-| `resolution_timestamp`      | `datetime \| None`    | UTC datetime of resolution; None until resolved                          |
-
-### AlertRule (dataclass)
-
-| Field              | Type    | Description                                              |
-|--------------------|---------|----------------------------------------------------------|
-| `name`             | `str`   | Human-readable rule name                                 |
-| `min_severity`     | `str`   | Minimum severity to fire; lower severities are suppressed|
-| `cooldown_seconds` | `int`   | Seconds between consecutive alerts for the same host     |
-| `enabled`          | `bool`  | When False, rule is skipped                              |
-
-### AlertManagerStats (dataclass)
-
-Output of `AlertManager.get_stats()`.
-
-| Field                    | Type                  | Description                                              |
-|--------------------------|-----------------------|----------------------------------------------------------|
-| `total_alerts_fired`     | `int`                 | Total alerts that fired (not suppressed)                 |
-| `alerts_suppressed`      | `int`                 | Total alerts suppressed by cooldown or severity filter   |
-| `alerts_by_severity`     | `dict[str, int]`      | Count per severity level                                 |
-| `alerts_by_host`         | `dict[str, int]`      | Count per host                                           |
-| `most_affected_host`     | `str`                 | Host with most fired alerts; "none" if empty             |
-| `last_alert_timestamp`   | `datetime \| None`    | Timestamp of the most recently fired alert               |
-
-### AlertManager behaviour
-
-| Condition                                | Outcome                                     |
-|------------------------------------------|---------------------------------------------|
-| `is_anomaly=False`                       | Returns `None`; no count incremented        |
-| Severity below `min_severity`            | Suppressed; `alerts_suppressed` +1          |
-| Host in cooldown (`< cooldown_seconds`)  | Suppressed; `alerts_suppressed` +1          |
-| All conditions met                       | Alert fires, stored, dispatched, returned   |
-
-CloudWatch dispatch (when `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` present):
-- Metric: namespace `FlowWatchAI`, name `AnomalyScore`, dimensions `Host` + `Severity`
-- Logs: group `/flowwatch/alerts`, stream per `host_id`
-
-### In-Memory Alert Store (`app.state.alert_manager`)
-
-| Store           | Type             | Max total | Location      |
-|-----------------|------------------|-----------|---------------|
-| `_alerts`       | `deque[Alert]`   | 1 000     | `AlertManager`|
+## Key Decisions
+
+| Date       | Decision                                                | Reason                                          |
+|------------|---------------------------------------------------------|-------------------------------------------------|
+| 2026-04-01 | FastAPI over Flask                                      | Native async, better for streaming              |
+| 2026-04-01 | LSTM + Isolation Forest ensemble                        | LSTM=temporal patterns, IF=snapshot outliers    |
+| 2026-04-01 | Claude API for RCA                                      | Best-in-class log/telemetry analysis            |
+| 2026-04-01 | LocalStack for local Kinesis                            | Avoid AWS costs during development              |
+| 2026-04-05 | In-memory deques as primary store                       | No DB wired yet; DB is now additive (Phase 10)  |
+| 2026-04-05 | X-API-Key auth                                          | Simple stateless; upgrade to JWT in Phase 11    |
+| 2026-04-07 | AsyncAnthropic client in RCAAgent                       | Matches FastAPI async model                     |
+| 2026-04-07 | AlertManager sync; callers use asyncio.to_thread        | boto3 is blocking                               |
+| 2026-04-07 | CloudWatch dispatch disabled gracefully without creds   | Dev environment works without AWS               |
+| 2026-04-07 | RCAPanel state lifted to page.tsx                       | AnomalyFeed and RCAPanel communicate via page   |
+| 2026-04-07 | AlertFeed as primary view; anomalies as detail          | Alerts are the operator-facing surface          |
+| 2026-04-07 | DB writes dual-path: memory (fast) + TimescaleDB (persist) | Survives restarts without slowing ingest    |
+| 2026-04-07 | DB optional: graceful fallback to in-memory on failure  | Stack works without a running database          |
 
 ---
 
 ## Notes for Claude Code
 
-- Always check this file first before writing new code
-- When adding a new module, update the Project Structure section above
-- When a phase is completed, check it off in the Current Status section
-- When a major architectural decision is made, log it in Key Decisions Log
-- The `.env.example` file must be kept in sync with all new env vars added
+- Always read this file before writing new code
+- When adding a module, update the Project Structure section
+- When a phase completes, check it off above
+- When a major architectural decision is made, log it in Key Decisions
+- Keep `.env.example` in sync with any new env vars

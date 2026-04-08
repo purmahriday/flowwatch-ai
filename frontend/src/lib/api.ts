@@ -216,7 +216,7 @@ async function request<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': API_KEY,
+      ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
       ...options.headers,
     },
   });

@@ -38,6 +38,7 @@ from backend.api.dependencies import (
     get_feature_extractor,
     severity_recommendation,
 )
+from backend.db import timeseries as db
 from backend.api.schemas import (
     AnomalyRecord,
     CombinedAnomalyResultSchema,
@@ -217,6 +218,13 @@ async def ingest_telemetry(
     store[body.host_id].append(processed)
     request.app.state.total_records_processed += 1
 
+    # ── Persist to DB (fire-and-forget, never blocks ingest) ─────────────────
+    if request.app.state.db is not None:
+        try:
+            await db.insert_telemetry(processed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DB telemetry insert failed: {e}", e=exc)
+
     # ── Feature extraction ────────────────────────────────────────────────────
     feature_vector = await asyncio.to_thread(feature_extractor.process, processed)
     window_ready = feature_vector is not None
@@ -251,6 +259,13 @@ async def ingest_telemetry(
                 method=combined.detection_method,
             )
             _store_anomaly(request, combined, body.host_id)
+
+            # ── Persist anomaly to DB ─────────────────────────────────────────
+            if request.app.state.db is not None:
+                try:
+                    await db.insert_anomaly(body.host_id, combined)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("DB anomaly insert failed: {e}", e=exc)
 
             # ── Alert evaluation ──────────────────────────────────────────────
             alert_manager = getattr(request.app.state, "alert_manager", None)
@@ -324,10 +339,24 @@ async def get_recent_telemetry(
     Returns:
         TelemetryRecentResponse with matching records and metadata.
     """
+    # ── Prefer TimescaleDB when available (persists across restarts) ─────────
+    if request.app.state.db is not None and host_id is not None:
+        try:
+            rows = await db.get_recent_telemetry(host_id, minutes)
+            rows = rows[:limit]
+            return TelemetryRecentResponse(
+                records=rows,
+                total_count=len(rows),
+                hosts_included=[host_id] if rows else [],
+                time_range_minutes=minutes,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DB telemetry read failed, falling back to memory: {e}", e=exc)
+
+    # ── In-memory fallback ────────────────────────────────────────────────────
     store: dict[str, deque] = request.app.state.telemetry_store
     cutoff_iso = datetime.now(timezone.utc)
 
-    # Determine which hosts to query
     if host_id is not None:
         if host_id not in store:
             return TelemetryRecentResponse(
@@ -340,7 +369,6 @@ async def get_recent_telemetry(
     else:
         hosts_to_query = list(store.keys())
 
-    # Collect matching records across requested hosts
     matching: list[dict] = []
     for hid in hosts_to_query:
         for record in store[hid]:
@@ -354,10 +382,8 @@ async def get_recent_telemetry(
             except (ValueError, AttributeError):
                 continue
 
-    # Sort newest-first, apply limit
     matching.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
     matching = matching[:limit]
-
     included_hosts = sorted({r["host_id"] for r in matching})
 
     return TelemetryRecentResponse(
