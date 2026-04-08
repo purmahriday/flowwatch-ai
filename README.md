@@ -2,8 +2,6 @@
 
 Real-time network monitoring and anomaly detection system powered by ML and an LLM-based root cause analysis assistant.
 
-⚠️ This project is actively being built. This README documents both what is complete and what is still in progress. I'm updating it as I go.
-
 **Why I Built This**
 
 After finishing my previous project - MedSynth, a multi-agent RAG system for clinical summarization - I wanted to tackle something completely different. Something closer to systems and infrastructure rather than NLP. As Suggested to me by Fred Weitendorf the Founder/ CEO @Accretional in LinkedIn
